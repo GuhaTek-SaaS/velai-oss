@@ -1,0 +1,209 @@
+# VelAI Helm chart — Phase 1: Admin Console + Orchestrator + On-call agent.
+#
+# This chart contains NO secrets and NO proprietary code — only Kubernetes
+# manifests. You supply:
+#   * container images (from the registry VelAI grants you pull access to), and
+#   * two pre-created Secrets (see below): the licence bundle and, optionally,
+#     the admin-console SSO client secret.
+# See README.md for the full install flow.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Container images ─────────────────────────────────────────────────────────
+# Set `registry` to the registry VelAI grants you pull access to, and provide a
+# pull secret in imagePullSecrets (a private registry). The image names + tags
+# below are placeholders — override with the tags you were given.
+image:
+  # The shared VelAI registry host you were given at onboarding, e.g.
+  # <account>.dkr.ecr.<region>.amazonaws.com. Combined with the repo names below
+  # to form <registry>/velai-shared/<component>:<tag>.
+  registry: "ACCOUNT.dkr.ecr.REGION.amazonaws.com"
+  pullPolicy: IfNotPresent
+# Name a pre-created docker-registry Secret used to pull the images, e.g.:
+#   kubectl -n velai create secret docker-registry velai-pull \
+#     --docker-server=<registry> --docker-username=<user> --docker-password=<token>
+imagePullSecrets: []
+# - name: velai-pull
+
+adminConsole:
+  enabled: true
+  image: "velai-shared/admin-console:latest"
+  replicas: 1
+  port: 8080
+  # SSO (generic OIDC — Google, JumpCloud, Okta…). Non-secret config here; the
+  # OIDC *client secret* comes from the Secret named in `existingSecret` below
+  # (key OIDC_CLIENT_SECRET). Leave issuer empty to run with the local admin
+  # login only (username/password from the licence bundle).
+  oidc:
+    issuer: ""            # e.g. https://accounts.google.com
+    clientId: ""
+    adminGroup: ""        # optional group required for the admin role
+  allowedDomain: ""       # restrict SSO sign-in to this email domain (optional)
+  adminEmails: ""         # comma-separated emails granted the admin role
+  sessionIdleMinutes: 30
+  # Pre-created Secret with the admin-console runtime secrets:
+  #   ADMIN_USERNAME, ADMIN_PASSWORD_HASH (from your VelAI credential bundle),
+  #   ADMIN_SESSION_SECRET (a random 32+ char string), and, if using SSO,
+  #   OIDC_CLIENT_SECRET. See README.
+  existingSecret: "velai-admin-secrets"
+  ingress:
+    enabled: false
+    className: ""
+    host: ""              # e.g. velai.your-company.com
+    annotations: {}
+    tls: []               # [{secretName: velai-tls, hosts: [velai.your-company.com]}]
+  resources:
+    requests: { cpu: "50m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+orchestrator:
+  enabled: true
+  image: "velai-shared/orchestrator:latest"
+  replicas: 1
+  port: 8080
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+
+oncall:
+  enabled: true
+  image: "velai-shared/oncall:latest"
+  replicas: 1
+  port: 8080
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+
+# ── Licence ──────────────────────────────────────────────────────────────────
+# The agents authenticate to the VelAI licence server on startup + daily. Create
+# the Secret below from the credential bundle you were issued (it holds
+# VELAI_TENANT_SLUG, VELAI_LICENSE_URL, and the tenant key + CA cert), e.g.:
+#   kubectl -n velai create secret generic velai-license \
+#     --from-literal=VELAI_TENANT_SLUG=<slug> \
+#     --from-literal=VELAI_LICENSE_URL=<url> \
+#     --from-file=VELAI_LICENSE_KEY=./<slug>-tenant.key \
+#     --from-file=VELAI_LICENSE_CA=./<slug>-velai-ca.crt
+license:
+  existingSecret: "velai-license"
+  # The cluster UID the licence is bound to (Guard 1). If empty, the agent reads
+  # it in-cluster automatically. Set it explicitly if the agent lacks RBAC to
+  # read the kube-system namespace:
+  #   kubectl get namespace kube-system -o jsonpath='{.metadata.uid}'
+  clusterUid: ""
+
+# Optional pre-created Secret with the agents' own runtime config (your LLM
+# provider keys, Slack/Jira tokens, etc.). Managed from the Admin Console UI in
+# normal operation; envFrom here as an optional bootstrap.
+agentConfig:
+  existingSecret: ""
+
+# ── Secret backend (agent configuration storage) ─────────────────────────────
+# Where the Admin Console stores each agent's configuration — LLM keys, Slack/Jira
+# tokens, MCP creds, etc. External Secrets Operator (below) syncs it into the
+# agents' pods. Choose one: aws | azure | gcp | oci | vault.
+#
+# Blank = UNCONFIGURED: the console still starts, but agent configuration can't be
+# saved until you pick a backend (do it in Admin Configuration → Secret backend,
+# which prints the exact Helm values to apply here on the next upgrade).
+secretBackend: ""
+
+aws:
+  region: ""                              # e.g. ap-south-1 (blank => pod/instance region)
+vault:                                    # secretBackend=vault (self-hosted HashiCorp Vault, KV v2)
+  addr: ""                                # https://vault.vault.svc:8200
+  mount: "secret"
+  k8sRole: "velai-admin"                  # Vault Kubernetes-auth role bound to the agents' SA
+  k8sAuthPath: "kubernetes"               # Vault kubernetes auth mount
+azure:                                    # secretBackend=azure (Azure Key Vault)
+  vaultUrl: ""                            # https://myvault.vault.azure.net
+  serviceAccount: "velai-admin-console"   # SA bound to the Azure workload identity
+gcp:                                      # secretBackend=gcp (Google Cloud Secret Manager)
+  project: ""
+  clusterLocation: ""                     # region/zone, for ESO workload-identity auth
+  clusterName: ""
+  serviceAccount: "velai-admin-console"
+oci:                                      # secretBackend=oci (OCI Vault — Secrets service)
+  auth: "workload"                        # workload (OKE Workload Identity) | instance | config
+  region: ""                              # e.g. ap-mumbai-1
+  vault: ""                               # ocid1.vault…
+  compartment: ""                         # ocid1.compartment…
+  key: ""                                 # ocid1.key…  (KMS key that encrypts new secrets)
+  serviceAccount: "velai-admin-console"
+
+# External Secrets Operator wiring — the chart creates the SecretStore(s) for your
+# chosen backend and a per-agent ExternalSecret that syncs <prefix>/<agent>/* into
+# the agents' Secrets. Enable once secretBackend is set.
+externalSecrets:
+  enabled: false
+  prefix: "velai"                         # store prefix — matches the console's settings_prefix
+  # Agents that get a synced config Secret. Keep to the agents this release actually
+  # deploys (free tier = orchestrator + oncall). OneGT renders this list from the
+  # tenant's licence — add a paid agent (conversation/rca) only when it's licensed
+  # AND deployed. Creating ExternalSecrets for undeployed agents just adds noise.
+  agents: [orchestrator, oncall]
+  refreshInterval: "1h"
+  # AWS uses two pre-created ClusterSecretStores (you create them with the IRSA/role
+  # that can read SSM + Secrets Manager). azure/gcp/oci/vault stores are chart-created.
+  paramsStore: "aws-parameter-store"
+  secretsStore: "aws-secrets-manager"
+
+# Bundled External Secrets Operator (subchart). Set false if your cluster already
+# runs ESO — the chart's SecretStore/ExternalSecret templates still apply.
+eso:
+  enabled: true
+external-secrets:
+  installCRDs: true
+
+# ── In-cluster Redis (orchestrator queue + console history) ──────────────────
+redis:
+  enabled: true
+  image: "redis:7-alpine"
+  port: 6379
+  resources:
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits:   { cpu: "250m", memory: "256Mi" }
+
+# ── In-cluster PostgreSQL (durable chat/incident history) ────────────────────
+# Provides DATABASE_URL to the console + agents. The password is auto-generated
+# into a chart-managed Secret on first install and preserved across upgrades — no
+# password is stored in this file. To use your own managed Postgres instead, set
+# postgresql.enabled=false and postgresql.externalUrl=postgres://user:pass@host/db.
+postgresql:
+  enabled: true
+  image: "postgres:16-alpine"
+  port: 5432
+  database: "velai"
+  username: "velai"
+  # Leave blank to auto-generate; or name a pre-created Secret with key "password".
+  existingSecret: ""
+  externalUrl: ""     # use an external DB instead of the in-cluster one
+  persistence:
+    enabled: true
+    size: "5Gi"
+    storageClass: ""
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+
+# ── Image-pull secret auto-refresh (license-gated) ──────────────────────────
+# When enabled, the Admin Console fetches short-lived registry credentials from
+# the VelAI licence server (returned only while your licence is valid) and keeps
+# the pull secret named below refreshed — so the kubelet can pull the private
+# images without you managing a long-lived token. Reference the same secret name
+# in imagePullSecrets above. Leave disabled to manage velai-pull yourself, or if
+# you use cross-account ECR / IRSA (serviceAccount.annotations) instead.
+pullRefresh:
+  enabled: false
+  secretName: "velai-pull"
+  intervalHours: 6
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}   # e.g. eks.amazonaws.com/role-arn for IRSA-based image pull
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

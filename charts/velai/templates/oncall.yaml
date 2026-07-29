@@ -1,0 +1,68 @@
+{{- if .Values.oncall.enabled }}
+{{- $fn := include "velai.fullname" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-oncall
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.oncall.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: oncall
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: oncall
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "velai.serviceAccountName" . }}
+      {{- include "velai.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: oncall
+          image: {{ include "velai.image" (dict "registry" .Values.image.registry "image" .Values.oncall.image) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.oncall.port }}
+          env:
+            {{- include "velai.licenseEnv" . | nindent 12 }}
+            - name: REDIS_URL
+              value: {{ include "velai.redisUrl" . | quote }}
+          envFrom:
+            {{- include "velai.commonEnvFrom" . | nindent 12 }}
+            {{- include "velai.agentConfigEnvFrom" (dict "root" . "agent" "oncall") | nindent 12 }}
+            {{- include "velai.dbEnvFrom" . | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.oncall.port }} }
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.oncall.port }} }
+            initialDelaySeconds: 20
+          resources: {{- toYaml .Values.oncall.resources | nindent 12 }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-oncall
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: oncall
+  ports:
+    - port: {{ .Values.oncall.port }}
+      targetPort: {{ .Values.oncall.port }}
+{{- end }}

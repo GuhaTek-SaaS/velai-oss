@@ -1,0 +1,25 @@
+apiVersion: v2
+name: velai
+description: VelAI SRE CoPilot — Admin Console + Orchestrator + On-call agent for Kubernetes.
+type: application
+version: 0.1.0
+appVersion: "1.0"
+home: https://github.com/GuhaTek-SaaS/velai-oss
+sources:
+  - https://github.com/GuhaTek-SaaS/velai-oss
+maintainers:
+  - name: GuhaTek
+keywords:
+  - sre
+  - incident-response
+  - rca
+  - on-call
+
+# External Secrets Operator — bundled so a fresh cluster can sync the chosen secret
+# backend (AWS/Azure/GCP/OCI/Vault) into the agents out of the box. Set eso.enabled=false
+# if your cluster already runs ESO. Run `helm dependency update` before install/package.
+dependencies:
+  - name: external-secrets
+    version: "0.9.20"
+    repository: "https://charts.external-secrets.io"
+    condition: eso.enabled

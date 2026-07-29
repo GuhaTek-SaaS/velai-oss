@@ -1,0 +1,127 @@
+{{- $fn := include "velai.fullname" . -}}
+{{- $pg := .Values.postgresql -}}
+{{- if or $pg.enabled $pg.externalUrl }}
+{{- /* Resolve the password: existingSecret > preserved-on-upgrade > generated. */ -}}
+{{- $pwSecretName := printf "%s-postgresql" $fn -}}
+{{- $existing := (lookup "v1" "Secret" .Release.Namespace $pwSecretName) -}}
+{{- $pw := "" -}}
+{{- if $pg.existingSecret -}}
+  {{- $s := (lookup "v1" "Secret" .Release.Namespace $pg.existingSecret) -}}
+  {{- if $s -}}{{- $pw = index $s.data "password" | b64dec -}}{{- end -}}
+{{- else if $existing -}}
+  {{- $pw = index $existing.data "password" | b64dec -}}
+{{- else -}}
+  {{- $pw = randAlphaNum 24 -}}
+{{- end -}}
+{{- $dbUrl := $pg.externalUrl -}}
+{{- if and $pg.enabled (not $pg.externalUrl) -}}
+  {{- $dbUrl = printf "postgresql://%s:%s@%s-postgresql:%v/%s" $pg.username $pw $fn $pg.port $pg.database -}}
+{{- end }}
+# Chart-managed DATABASE_URL (external, or built from the in-cluster Postgres).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fn }}-db
+  labels: {{- include "velai.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  DATABASE_URL: {{ $dbUrl | quote }}
+{{- if and $pg.enabled (not $pg.externalUrl) (not $pg.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $pwSecretName }}
+  labels: {{- include "velai.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep   # keep the generated password across upgrades
+type: Opaque
+stringData:
+  password: {{ $pw | quote }}
+{{- end }}
+{{- end }}
+{{- if and .Values.postgresql.enabled (not .Values.postgresql.externalUrl) }}
+{{- $pwRef := .Values.postgresql.existingSecret | default (printf "%s-postgresql" $fn) }}
+---
+{{- if .Values.postgresql.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fn }}-postgresql
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.postgresql.persistence.size | quote }}
+  {{- with .Values.postgresql.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-postgresql
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      {{- include "velai.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: postgresql
+          image: {{ .Values.postgresql.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.postgresql.port }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $pwRef | quote }}
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", {{ .Values.postgresql.username | quote }}] }
+            initialDelaySeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources: {{- toYaml .Values.postgresql.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.postgresql.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fn }}-postgresql
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-postgresql
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: postgresql
+  ports:
+    - port: {{ .Values.postgresql.port }}
+      targetPort: {{ .Values.postgresql.port }}
+{{- end }}

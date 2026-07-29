@@ -1,0 +1,29 @@
+VelAI is installing into namespace "{{ .Release.Namespace }}".
+
+Components:
+{{- if .Values.adminConsole.enabled }}  ✓ Admin Console{{- end }}
+{{- if .Values.orchestrator.enabled }}  ✓ Orchestrator{{- end }}
+{{- if .Values.oncall.enabled }}  ✓ On-call agent{{- end }}
+{{- if .Values.redis.enabled }}  ✓ Redis{{- end }}
+{{- if .Values.postgresql.enabled }}  ✓ PostgreSQL{{- end }}
+
+1) Confirm the required Secrets exist (the agents fail closed without a valid licence):
+   - {{ .Values.license.existingSecret }}  (licence bundle: VELAI_TENANT_SLUG / URL / KEY / CA)
+{{- if .Values.adminConsole.enabled }}
+   - {{ .Values.adminConsole.existingSecret }}  (ADMIN_USERNAME, ADMIN_PASSWORD_HASH, SESSION_SECRET[, OIDC_CLIENT_SECRET])
+{{- end }}
+
+2) Watch rollout:
+   kubectl -n {{ .Release.Namespace }} get pods -w
+
+{{- if .Values.adminConsole.enabled }}
+3) Open the Admin Console:
+{{- if .Values.adminConsole.ingress.enabled }}
+   https://{{ .Values.adminConsole.ingress.host }}
+{{- else }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "velai.fullname" . }}-admin-console {{ .Values.adminConsole.port }}:{{ .Values.adminConsole.port }}
+   then browse http://localhost:{{ .Values.adminConsole.port }}
+{{- end }}
+{{- end }}
+
+Full docs: https://github.com/GuhaTek-SaaS/velai-oss

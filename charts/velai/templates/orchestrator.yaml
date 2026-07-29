@@ -1,0 +1,70 @@
+{{- if .Values.orchestrator.enabled }}
+{{- $fn := include "velai.fullname" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-orchestrator
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.orchestrator.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: orchestrator
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "velai.serviceAccountName" . }}
+      {{- include "velai.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: orchestrator
+          image: {{ include "velai.image" (dict "registry" .Values.image.registry "image" .Values.orchestrator.image) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.orchestrator.port }}
+          env:
+            {{- include "velai.licenseEnv" . | nindent 12 }}
+            - name: ONCALL_BASE_URL
+              value: "http://{{ $fn }}-oncall:{{ .Values.oncall.port }}"
+            - name: REDIS_URL
+              value: {{ include "velai.redisUrl" . | quote }}
+          envFrom:
+            {{- include "velai.commonEnvFrom" . | nindent 12 }}
+            {{- include "velai.agentConfigEnvFrom" (dict "root" . "agent" "orchestrator") | nindent 12 }}
+            {{- include "velai.dbEnvFrom" . | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.orchestrator.port }} }
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.orchestrator.port }} }
+            initialDelaySeconds: 20
+          resources: {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-orchestrator
+  labels: {{- include "velai.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: orchestrator
+  ports:
+    - port: {{ .Values.orchestrator.port }}
+      targetPort: {{ .Values.orchestrator.port }}
+{{- end }}
