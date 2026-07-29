@@ -11,11 +11,11 @@ images and two pre-created Secrets.
 - A VelAI **licence bundle** (issued to you — tenant slug, licence URL, tenant key, CA cert)
 - **Pull access** to the VelAI images (see "Images & pull access" below)
 
-## 1. Install from the Helm repo
+## 1. Get the chart
 
 ```bash
-helm repo add velai https://guhatek-saas.github.io/velai-oss
-helm repo update
+git clone https://github.com/GuhaTek-SaaS/velai-oss.git
+cd velai-oss
 kubectl create namespace velai
 ```
 
@@ -93,7 +93,7 @@ only that one secret). You don't pre-create `velai-pull` in this mode.
 ## 4. Install
 
 ```bash
-helm install velai velai/velai -n velai -f my-values.yaml
+helm install velai ./charts/velai -n velai -f my-values.yaml
 kubectl -n velai get pods -w
 ```
 
