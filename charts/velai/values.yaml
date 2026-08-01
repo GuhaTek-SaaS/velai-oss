@@ -84,6 +84,10 @@ oncall:
 # (fine — the orchestrator already queues alerts upstream).
 rca:
   enabled: false
+  # Set true when rca.agent.image is a per-client OBFUSCATED image (loader entrypoint).
+  # Adds a RAM-backed exec tmpfs the loader unseals protected.myc into. Harmless-but-
+  # unused for a plain image; leave false then.
+  protected: false
   agent:
     image: "velai-shared/rca-agent:latest"   # per-client obfuscated image goes here
     port: 8080

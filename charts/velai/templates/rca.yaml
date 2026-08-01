@@ -181,6 +181,13 @@ spec:
             - name: ORCHESTRATOR_CALLBACK_URL
               value: "http://{{ $full }}-orchestrator:{{ .Values.orchestrator.port }}/callbacks/rca"
             {{- end }}
+            {{- if .Values.rca.protected }}
+            # Per-client obfuscated image: the boot loader unseals protected.myc into
+            # this RAM-backed, exec-allowed tmpfs at startup — the decrypted .so never
+            # touch disk. Requires the emptyDir{medium:Memory} volume mounted below.
+            - name: VELAI_PROTECT_TMPDIR
+              value: /mods
+            {{- end }}
           envFrom:
             {{- include "velai.commonEnvFrom" . | nindent 12 }}
             {{- include "velai.agentConfigEnvFrom" (dict "root" . "agent" "rca") | nindent 12 }}
@@ -190,6 +197,19 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 15
           resources: {{- toYaml .Values.rca.agent.resources | nindent 12 }}
+          {{- if .Values.rca.protected }}
+          volumeMounts:
+            - name: protect-tmp
+              mountPath: /mods
+          {{- end }}
+      {{- if .Values.rca.protected }}
+      # RAM-backed tmpfs for the protected loader (exec-allowed; never spills to disk).
+      volumes:
+        - name: protect-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
